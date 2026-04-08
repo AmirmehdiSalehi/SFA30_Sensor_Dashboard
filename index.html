@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SFA30 Formaldehyde Monitor Dashboard</title>
+    <title>Air Quality Monitor Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * {
@@ -42,9 +42,29 @@
             font-size: 14px;
         }
 
+        .sensor-label {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            margin-top: 8px;
+        }
+
+        .sensor-label.sfa30 {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .sensor-label.sen55 {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
             margin-bottom: 30px;
         }
@@ -184,7 +204,7 @@
 
         @media (max-width: 768px) {
             .stats-grid {
-                grid-template-columns: 1fr;
+                grid-template-columns: 1fr 1fr;
             }
 
             .stat-value {
@@ -196,8 +216,8 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>SFA30 Formaldehyde Monitor</h1>
-            <p class="subtitle">Real-time air quality monitoring dashboard</p>
+            <h1>Air Quality Monitor</h1>
+            <p class="subtitle">Real-time monitoring: SFA30 (Formaldehyde) + SEN55 (VOC / Particulate Matter)</p>
             <p class="timestamp" id="lastUpdate">Last updated: Never</p>
         </div>
 
@@ -207,6 +227,30 @@
                 <div class="stat-value" id="hchoValue">--</div>
                 <div class="stat-unit">ppb</div>
                 <div class="status safe" id="hchoStatus">Initializing...</div>
+                <div class="sensor-label sfa30">SFA30</div>
+            </div>
+
+            <div class="stat-card" id="vocCard">
+                <div class="stat-label">VOC Index</div>
+                <div class="stat-value" id="vocValue">--</div>
+                <div class="stat-unit">index (1-500)</div>
+                <div class="status safe" id="vocStatus">Initializing...</div>
+                <div class="sensor-label sen55">SEN55</div>
+            </div>
+
+            <div class="stat-card" id="pm25Card">
+                <div class="stat-label">PM2.5</div>
+                <div class="stat-value" id="pm25Value">--</div>
+                <div class="stat-unit">ug/m3</div>
+                <div class="status safe" id="pm25Status">Initializing...</div>
+                <div class="sensor-label sen55">SEN55</div>
+            </div>
+
+            <div class="stat-card" id="pm10Card">
+                <div class="stat-label">PM1.0</div>
+                <div class="stat-value" id="pm10Value">--</div>
+                <div class="stat-unit">ug/m3</div>
+                <div class="sensor-label sen55">SEN55</div>
             </div>
 
             <div class="stat-card">
@@ -229,7 +273,7 @@
         </div>
 
         <div class="chart-container">
-            <div class="chart-title">Formaldehyde Levels Over Time</div>
+            <div class="chart-title">Formaldehyde Levels Over Time (SFA30)</div>
             <div class="controls">
                 <select id="timeRange">
                     <option value="1">Last 1 Hour</option>
@@ -244,6 +288,11 @@
         </div>
 
         <div class="chart-container">
+            <div class="chart-title">VOC Index & PM2.5 Over Time (SEN55)</div>
+            <canvas id="vocPmChart"></canvas>
+        </div>
+
+        <div class="chart-container">
             <div class="chart-title">Temperature & Humidity</div>
             <canvas id="envChart"></canvas>
         </div>
@@ -251,10 +300,12 @@
 
     <script>
         const API_URL = 'https://qt7ht3kf2wfa3xlrftafsmxs2a0qflkf.lambda-url.us-east-2.on.aws/';
-        const THRESHOLD = 400;
+        const HCHO_THRESHOLD = 400;
+        const VOC_THRESHOLD = 250;
+        const PM25_THRESHOLD = 25;
         const REFRESH_INTERVAL = 30000;
 
-        let hchoChart, envChart;
+        let hchoChart, vocPmChart, envChart;
         let autoRefresh = true;
         let refreshTimer;
 
@@ -289,6 +340,62 @@
                     plugins: { legend: { display: true, position: 'top' } },
                     scales: {
                         y: { beginAtZero: true, title: { display: true, text: 'Formaldehyde (ppb)' } },
+                        x: { title: { display: true, text: 'Time' } }
+                    }
+                }
+            });
+
+            const vocPmCtx = document.getElementById('vocPmChart').getContext('2d');
+            vocPmChart = new Chart(vocPmCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'VOC Index',
+                        data: [],
+                        borderColor: '#ff6b6b',
+                        backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                        borderWidth: 3,
+                        tension: 0.4,
+                        yAxisID: 'y',
+                        fill: true
+                    }, {
+                        label: 'VOC Threshold (250)',
+                        data: [],
+                        borderColor: '#f5576c',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        pointRadius: 0,
+                        yAxisID: 'y',
+                        fill: false
+                    }, {
+                        label: 'PM2.5 (ug/m3)',
+                        data: [],
+                        borderColor: '#ffa726',
+                        backgroundColor: 'rgba(255, 167, 38, 0.1)',
+                        borderWidth: 3,
+                        tension: 0.4,
+                        yAxisID: 'y1',
+                        fill: true
+                    }, {
+                        label: 'PM2.5 Threshold (25 ug/m3)',
+                        data: [],
+                        borderColor: '#e65100',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        pointRadius: 0,
+                        yAxisID: 'y1',
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    aspectRatio: 2.5,
+                    plugins: { legend: { display: true, position: 'top' } },
+                    scales: {
+                        y: { type: 'linear', position: 'left', beginAtZero: true, title: { display: true, text: 'VOC Index' } },
+                        y1: { type: 'linear', position: 'right', beginAtZero: true, title: { display: true, text: 'PM2.5 (ug/m3)' }, grid: { drawOnChartArea: false } },
                         x: { title: { display: true, text: 'Time' } }
                     }
                 }
@@ -354,7 +461,6 @@
                 const result = await response.json();
 
                 if (result.data && result.data.length > 0) {
-                    // Sort data by timestamp ascending (oldest first, newest last)
                     const sortedData = result.data.slice().sort((a, b) => {
                         return parseTimestamp(a.timestamp) - parseTimestamp(b.timestamp);
                     });
@@ -372,61 +478,138 @@
         }
 
         function updateDashboard(data) {
-            // Latest reading is now guaranteed to be the last item after sorting
-            const latest = data[data.length - 1];
+            // Split data by device type
+            const sfa30Data = data.filter(d => !d.device_type || d.device_type === 'SFA30');
+            const sen55Data = data.filter(d => d.device_type === 'SEN55');
 
-            document.getElementById('hchoValue').textContent = latest.formaldehyde_ppb.toFixed(1);
-            document.getElementById('humidityValue').textContent = latest.humidity_rh.toFixed(1);
-            document.getElementById('tempValue').textContent = latest.temperature_c.toFixed(1);
-            document.getElementById('dataCount').textContent = data.length;
+            // Latest readings from each sensor
+            const latestSFA30 = sfa30Data.length > 0 ? sfa30Data[sfa30Data.length - 1] : null;
+            const latestSEN55 = sen55Data.length > 0 ? sen55Data[sen55Data.length - 1] : null;
 
-            const hchoCard = document.getElementById('hchoCard');
-            const hchoStatus = document.getElementById('hchoStatus');
-
-            if (latest.formaldehyde_ppb > THRESHOLD) {
-                hchoCard.classList.add('alert');
-                hchoStatus.className = 'status danger';
-                hchoStatus.textContent = 'Above Threshold';
-            } else if (latest.formaldehyde_ppb > THRESHOLD * 0.75) {
-                hchoCard.classList.remove('alert');
-                hchoStatus.className = 'status warning';
-                hchoStatus.textContent = 'Approaching Threshold';
-            } else {
-                hchoCard.classList.remove('alert');
-                hchoStatus.className = 'status safe';
-                hchoStatus.textContent = 'Safe Levels';
+            // Formaldehyde (SFA30)
+            if (latestSFA30) {
+                document.getElementById('hchoValue').textContent = latestSFA30.formaldehyde_ppb.toFixed(1);
+                const hchoCard = document.getElementById('hchoCard');
+                const hchoStatus = document.getElementById('hchoStatus');
+                if (latestSFA30.formaldehyde_ppb > HCHO_THRESHOLD) {
+                    hchoCard.classList.add('alert');
+                    hchoStatus.className = 'status danger';
+                    hchoStatus.textContent = 'Above Threshold';
+                } else if (latestSFA30.formaldehyde_ppb > HCHO_THRESHOLD * 0.75) {
+                    hchoCard.classList.remove('alert');
+                    hchoStatus.className = 'status warning';
+                    hchoStatus.textContent = 'Approaching Threshold';
+                } else {
+                    hchoCard.classList.remove('alert');
+                    hchoStatus.className = 'status safe';
+                    hchoStatus.textContent = 'Safe Levels';
+                }
             }
 
-            const latestTime = parseTimestamp(latest.timestamp);
+            // VOC Index (SEN55)
+            if (latestSEN55 && latestSEN55.voc_index !== undefined) {
+                document.getElementById('vocValue').textContent = latestSEN55.voc_index.toFixed(0);
+                const vocCard = document.getElementById('vocCard');
+                const vocStatus = document.getElementById('vocStatus');
+                if (latestSEN55.voc_index > VOC_THRESHOLD) {
+                    vocCard.classList.add('alert');
+                    vocStatus.className = 'status danger';
+                    vocStatus.textContent = 'Degraded Air';
+                } else if (latestSEN55.voc_index > VOC_THRESHOLD * 0.75) {
+                    vocCard.classList.remove('alert');
+                    vocStatus.className = 'status warning';
+                    vocStatus.textContent = 'Moderate';
+                } else {
+                    vocCard.classList.remove('alert');
+                    vocStatus.className = 'status safe';
+                    vocStatus.textContent = 'Good Air Quality';
+                }
+            }
+
+            // PM2.5 (SEN55)
+            if (latestSEN55 && latestSEN55.pm2_5 !== undefined) {
+                document.getElementById('pm25Value').textContent = latestSEN55.pm2_5.toFixed(1);
+                const pm25Card = document.getElementById('pm25Card');
+                const pm25Status = document.getElementById('pm25Status');
+                if (latestSEN55.pm2_5 > PM25_THRESHOLD) {
+                    pm25Card.classList.add('alert');
+                    pm25Status.className = 'status danger';
+                    pm25Status.textContent = 'Above WHO Limit';
+                } else if (latestSEN55.pm2_5 > PM25_THRESHOLD * 0.75) {
+                    pm25Card.classList.remove('alert');
+                    pm25Status.className = 'status warning';
+                    pm25Status.textContent = 'Approaching Limit';
+                } else {
+                    pm25Card.classList.remove('alert');
+                    pm25Status.className = 'status safe';
+                    pm25Status.textContent = 'Safe Levels';
+                }
+            }
+
+            // PM1.0 (SEN55)
+            if (latestSEN55 && latestSEN55.pm1_0 !== undefined) {
+                document.getElementById('pm10Value').textContent = latestSEN55.pm1_0.toFixed(1);
+            }
+
+            // Humidity & Temperature - prefer SFA30, fallback to SEN55
+            const envSource = latestSFA30 || latestSEN55;
+            if (envSource) {
+                document.getElementById('humidityValue').textContent = envSource.humidity_rh.toFixed(1);
+                document.getElementById('tempValue').textContent = envSource.temperature_c.toFixed(1);
+            }
+
+            document.getElementById('dataCount').textContent = data.length;
+
+            // Timestamp from most recent reading of either sensor
+            const latestTime = parseTimestamp(
+                (latestSEN55 && latestSFA30)
+                    ? Math.max(latestSFA30.timestamp, latestSEN55.timestamp)
+                    : (latestSFA30 || latestSEN55).timestamp
+            );
             document.getElementById('lastUpdate').textContent = `Last reading: ${latestTime.toLocaleString()}`;
 
-            updateCharts(data);
+            updateCharts(sfa30Data, sen55Data);
         }
 
-        function updateCharts(data) {
+        function updateCharts(sfa30Data, sen55Data) {
             const hours = parseInt(document.getElementById('timeRange').value);
 
-            const labels = data.map(d => {
-                const date = parseTimestamp(d.timestamp);
+            function formatLabel(timestamp) {
+                const date = parseTimestamp(timestamp);
                 if (hours > 24) {
                     return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
                 }
                 return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            });
+            }
 
-            const hchoData = data.map(d => d.formaldehyde_ppb);
-            const thresholdData = data.map(() => THRESHOLD);
-            const tempData = data.map(d => d.temperature_c);
-            const humidityData = data.map(d => d.humidity_rh);
-
-            hchoChart.data.labels = labels;
-            hchoChart.data.datasets[0].data = hchoData;
-            hchoChart.data.datasets[1].data = thresholdData;
+            // Formaldehyde chart (SFA30 data only)
+            if (sfa30Data.length > 0) {
+                const labels = sfa30Data.map(d => formatLabel(d.timestamp));
+                hchoChart.data.labels = labels;
+                hchoChart.data.datasets[0].data = sfa30Data.map(d => d.formaldehyde_ppb);
+                hchoChart.data.datasets[1].data = sfa30Data.map(() => HCHO_THRESHOLD);
+            }
             hchoChart.update();
 
-            envChart.data.labels = labels;
-            envChart.data.datasets[0].data = tempData;
-            envChart.data.datasets[1].data = humidityData;
+            // VOC + PM2.5 chart (SEN55 data only)
+            if (sen55Data.length > 0) {
+                const labels = sen55Data.map(d => formatLabel(d.timestamp));
+                vocPmChart.data.labels = labels;
+                vocPmChart.data.datasets[0].data = sen55Data.map(d => d.voc_index);
+                vocPmChart.data.datasets[1].data = sen55Data.map(() => VOC_THRESHOLD);
+                vocPmChart.data.datasets[2].data = sen55Data.map(d => d.pm2_5);
+                vocPmChart.data.datasets[3].data = sen55Data.map(() => PM25_THRESHOLD);
+            }
+            vocPmChart.update();
+
+            // Environment chart - use whichever sensor has more data, prefer SFA30
+            const envData = sfa30Data.length > 0 ? sfa30Data : sen55Data;
+            if (envData.length > 0) {
+                const labels = envData.map(d => formatLabel(d.timestamp));
+                envChart.data.labels = labels;
+                envChart.data.datasets[0].data = envData.map(d => d.temperature_c);
+                envChart.data.datasets[1].data = envData.map(d => d.humidity_rh);
+            }
             envChart.update();
         }
 
